@@ -1,3 +1,5 @@
+# Takes in raw and calibrated waveform data and applied pedistal subtraction
+
 from __future__ import division, print_function, absolute_import
 import sys, os, pwd
 import datetime
@@ -29,7 +31,7 @@ class waveform(object):
             self._load_database(database)
 
     def _add_branch(self, event, block , phase, waveform, timestamp,
-                    module, asic, channel):
+                    module, asic, channel, amplitude, position, charge):
         """ create new branch to hold waveform data """
 	branch_name = "Module{}/Asic{}/Channel{}".format(module ,asic, channel)
 	branch = self.database.create_group(branch_name)
@@ -38,6 +40,9 @@ class waveform(object):
 	branch.create_dataset("phase", data=phase)
         branch.create_dataset("timestamp", data=timestamp)
 	branch.create_dataset("waveform", data=waveform)
+	branch.create_dataset("amplitude", data=amplitude)
+        branch.create_dataset("position", data=position)
+        branch.create_dataset("charge", data=charge)
 
     def _add_ped_sub_branch(self, event, block , phase, waveform, cal_waveform, 
                             timestamp, module, asic, channel,
@@ -49,8 +54,8 @@ class waveform(object):
 	branch.create_dataset("block", data=block)
 	branch.create_dataset("phase", data=phase)
         branch.create_dataset("timestamp", data=timestamp)
-	branch.create_dataset("waveform", data=waveform)
-	branch.create_dataset("cal_waveform",data=cal_waveform)
+	branch.create_dataset("raw_waveform", data=waveform) # This is the uncalibrated waveform
+	branch.create_dataset("waveform",data=cal_waveform) # This is the full pedestal subtracted waveform
         branch.create_dataset("amplitude", data=amplitude)
         branch.create_dataset("position", data=position)
         branch.create_dataset("charge", data=charge)
@@ -173,8 +178,8 @@ class waveform(object):
             self.database.attrs['ped_name'] = str(self.ped_database.filename)
             self.database.attrs['charge_interval'] = "-{}, +{}".format(self.lower, self.upper)
         else:
-            self.database.attrs['keys'] = "event, block, phase, timestamp, waveform"
-
+            self.database.attrs['keys'] = "event, block, phase, timestamp, waveform, amplitude, position, charge" #FIXME
+	    self.database.attrs['charge_interval'] = "-{}, +{}".format(self.lower, self.upper) #FIXME
     def _set_channels_per_packet(self):
         """ assign channels per packet  """
 	self.channels_per_packet = int((0.5*self.packet_size-10.)/(self.n_samples+1.))
@@ -232,6 +237,9 @@ class waveform(object):
         phase = np.zeros(self.n_events,dtype=int)
         timestamp = np.zeros(self.n_events,dtype=int)
         waveform = np.zeros((self.n_events,self.n_samples),dtype=int)
+	amplitude = np.zeros(self.n_events,dtype=float)
+	position = np.zeros(self.n_events,dtype=int)
+	charge = np.zeros(self.n_events,dtype=float) #FIXME
 	for ievt in xrange(self.n_events):
             if(ievt%1000==0):
 		sys.stdout.write('\r')
@@ -248,8 +256,20 @@ class waveform(object):
             timestamp[ievt] = self.packet.GetTACKTime()
 	    wf = self.packet.GetWaveform(channel%self.channels_per_packet)
 	    waveform[ievt,:] = map(wf.GetADC, self.waveform)
+	    #FIXME
+	    samples = map(wf.GetADC, self.waveform)
+	    amplitude[ievt] = np.amax(samples)
+            peak_pos = np.argmax(samples)
+            position[ievt] = peak_pos
+            if peak_pos < self.lower:
+            	charge[ievt] = np.sum(samples[:peak_pos+self.upper])
+            elif peak_pos >=  (self.n_samples-self.upper):
+                charge[ievt] = np.sum(samples[peak_pos-self.lower:])
+            else:
+                charge[ievt] = np.sum(samples[peak_pos-self.lower:peak_pos+self.upper])
+	    #print(charge) #FIXME
 
-        self._add_branch(event, block, phase, waveform, timestamp, module, asic, channel)
+        self._add_branch(event, block, phase, waveform, timestamp, module, asic, channel, amplitude, position, charge)
         sys.stdout.write('\n')
 
     def _write_subtracted_events(self, mod_i, module, asic, channel):
@@ -518,7 +538,6 @@ class waveform(object):
         """
 	if not os.path.ismount(os.environ['HOME']+'/target5and7data'):
 	    raise IOError('{}/target5and7data must be mounted!'.format(os.environ['HOME']))
-
         if not outname:
             outname = 'run{}.h5'.format(run_number)
         outfile = outdir+'/'+outname
