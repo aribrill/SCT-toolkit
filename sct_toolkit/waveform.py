@@ -537,7 +537,7 @@ class waveform(object):
 
         """
 	if not os.path.ismount(os.environ['HOME']+'/target5and7data'):
-	    raise IOError('{}/target5and7data must be mounted!'.format(os.environ['HOME']))
+	    print('{}/target5and7data must be mounted!'.format(os.environ['HOME']))
         if not outname:
             outname = 'run{}.h5'.format(run_number)
         outfile = outdir+'/'+outname
